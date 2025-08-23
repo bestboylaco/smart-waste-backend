@@ -1,59 +1,79 @@
-name: Backend CI/CD
+name: Backend CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+      - tests/add-sanity-spec
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+      - tests/add-sanity-spec
+
+# Cancel older runs of the same ref to save minutes
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test_and_deploy:
-    # Use GitHub-hosted runner by default
+  backend-tests:
+    name: Run backend tests
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - name: Install backend deps
-        working-directory: backend
-        run: npm ci || npm install
+      - name: Install deps
+        run: npm ci
 
-      - name: Run backend tests
-        working-directory: backend
-        env:
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          PORT: ${{ secrets.PORT }}
+      - name: Run tests
         run: npm test
 
-      # Optional: create .env for starting the server in later steps
-      - name: Write .env for server (optional)
-        if: ${{ secrets.MONGO_URI != '' && secrets.JWT_SECRET != '' && secrets.PORT != '' }}
+  pm2_deploy:
+    name: Optional PM2 deploy (.env + pm2) — self-hosted only
+    needs: backend-tests
+    # Run only on non-PR events, on self-hosted runners, and when all secrets are set
+    if: ${{ success() && github.event_name != 'pull_request' && contains(runner.labels, 'self-hosted') && secrets.MONGO_URI != '' && secrets.JWT_SECRET != '' && secrets.PORT != '' }}
+    runs-on: self-hosted
+    defaults:
+      run:
         working-directory: backend
-        run: |
-          cat > .env <<'EOF'
-          MONGO_URI=${{ secrets.MONGO_URI }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          PORT=${{ secrets.PORT }}
-          EOF
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # The following steps only run if you later use a self-hosted runner
-      - name: Stop PM2 apps (self-hosted only, ignore errors)
-        if: contains(runner.labels, 'self-hosted')
-        run: pm2 stop all || true
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Restart API with PM2 (self-hosted only)
-        if: contains(runner.labels, 'self-hosted')
-        working-directory: backend
+      - name: Install deps
+        run: npm ci
+
+      - name: Write .env from repo secrets
         run: |
-          pm2 describe smartwaste-api >/dev/null 2>&1 && \
-            pm2 restart smartwaste-api || pm2 start "npm start" --name smartwaste-api
+          printf "MONGO_URI=%s\nJWT_SECRET=%s\nPORT=%s\n" \
+            "${{ secrets.MONGO_URI }}" \
+            "${{ secrets.JWT_SECRET }}" \
+            "${{ secrets.PORT }}" > .env
+
+      - name: Install PM2 and (re)start app
+        run: |
+          npm i -g pm2
+          pm2 delete smart-waste-backend || true
+          pm2 start npm --name "smart-waste-backend" -- run start
           pm2 save
