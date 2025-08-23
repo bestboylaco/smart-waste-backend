@@ -8,10 +8,8 @@ on:
 
 jobs:
   test_and_deploy:
-    # if your EC2 self-hosted runner is installed, keep this line:
-    runs-on: self-hosted
-    # if you DON'T have the runner yet, temporarily use:
-    # runs-on: ubuntu-latest
+    # Use GitHub-hosted runner by default
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -21,9 +19,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Stop PM2 apps (ignore errors)
-        run: pm2 stop all || true
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install backend deps
         working-directory: backend
@@ -37,7 +34,9 @@ jobs:
           PORT: ${{ secrets.PORT }}
         run: npm test
 
-      - name: Write .env for server
+      # Optional: create .env for starting the server in later steps
+      - name: Write .env for server (optional)
+        if: ${{ secrets.MONGO_URI != '' && secrets.JWT_SECRET != '' && secrets.PORT != '' }}
         working-directory: backend
         run: |
           cat > .env <<'EOF'
@@ -46,12 +45,15 @@ jobs:
           PORT=${{ secrets.PORT }}
           EOF
 
-      - name: Restart API with PM2
+      # The following steps only run if you later use a self-hosted runner
+      - name: Stop PM2 apps (self-hosted only, ignore errors)
+        if: contains(runner.labels, 'self-hosted')
+        run: pm2 stop all || true
+
+      - name: Restart API with PM2 (self-hosted only)
+        if: contains(runner.labels, 'self-hosted')
         working-directory: backend
         run: |
           pm2 describe smartwaste-api >/dev/null 2>&1 && \
             pm2 restart smartwaste-api || pm2 start "npm start" --name smartwaste-api
           pm2 save
-
-            
-# ci: touch to retrigger
