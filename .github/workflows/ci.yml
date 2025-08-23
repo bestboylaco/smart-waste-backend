@@ -2,78 +2,34 @@ name: Backend CI
 
 on:
   push:
-    branches:
-      - main
-      - tests/add-sanity-spec
+    branches: [ "main" ]
   pull_request:
-    branches:
-      - main
-      - tests/add-sanity-spec
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [ "main" ]
 
 jobs:
-  backend-tests:
-    name: Run backend tests
+  test:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
-    env:
-      CI: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20          # use 22 only if required
+          node-version: 22
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - name: Install deps
-        run: npm ci
+      - name: Install backend deps
+        run: npm ci || npm install
 
-      - name: Run tests
+      - name: Run backend tests
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          PORT: ${{ secrets.PORT }}
         run: npm test
-
-  pm2_deploy:
-    name: Optional PM2 deploy (.env + pm2) — self-hosted only
-    needs: backend-tests
-    # Only on non-PR events and when all secrets are set
-    if: ${{ github.event_name != 'pull_request' && secrets.MONGO_URI != '' && secrets.JWT_SECRET != '' && secrets.PORT != '' }}
-    runs-on: self-hosted
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-
-      - name: Install deps
-        run: npm ci
-
-      - name: Write .env from repo secrets
-        run: |
-          {
-            echo "MONGO_URI=${{ secrets.MONGO_URI }}"
-            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}"
-            echo "PORT=${{ secrets.PORT }}"
-          } > .env
-
-      - name: Install PM2 and (re)start app
-        run: |
-          npm i -g pm2
-          pm2 delete smart-waste-backend || true
-          pm2 start npm --name "smart-waste-backend" -- run start
-          pm2 save
