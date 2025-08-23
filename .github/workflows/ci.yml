@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,6 +18,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install backend deps
         working-directory: backend
@@ -29,3 +32,26 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           PORT: ${{ secrets.PORT }}
         run: npm test
+
+      # Optional — only useful if you later run on a self-hosted runner (PM2)
+      - name: Write .env for server (optional)
+        if: ${{ secrets.MONGO_URI != '' && secrets.JWT_SECRET != '' && secrets.PORT != '' }}
+        working-directory: backend
+        run: |
+          cat > .env <<'EOF'
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          PORT=${{ secrets.PORT }}
+          EOF
+
+      - name: Stop PM2 apps (self-hosted only, ignore errors)
+        if: contains(runner.labels, 'self-hosted')
+        run: pm2 stop all || true
+
+      - name: Restart API with PM2 (self-hosted only)
+        if: contains(runner.labels, 'self-hosted')
+        working-directory: backend
+        run: |
+          pm2 describe smartwaste-api >/dev/null 2>&1 && \
+            pm2 restart smartwaste-api || pm2 start "npm start" --name smartwaste-api
+          pm2 save
