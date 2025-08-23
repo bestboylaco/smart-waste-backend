@@ -1,4 +1,4 @@
-name: Backend CI/CD
+name: Backend CI
 
 on:
   push:
@@ -7,8 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  test_and_deploy:
-    # Use GitHub-hosted runner by default
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -34,7 +33,7 @@ jobs:
           PORT: ${{ secrets.PORT }}
         run: npm test
 
-      # Optional: create .env for starting the server in later steps
+      # Optional — only useful if you later run on a self-hosted runner (PM2)
       - name: Write .env for server (optional)
         if: ${{ secrets.MONGO_URI != '' && secrets.JWT_SECRET != '' && secrets.PORT != '' }}
         working-directory: backend
@@ -45,7 +44,6 @@ jobs:
           PORT=${{ secrets.PORT }}
           EOF
 
-      # The following steps only run if you later use a self-hosted runner
       - name: Stop PM2 apps (self-hosted only, ignore errors)
         if: contains(runner.labels, 'self-hosted')
         run: pm2 stop all || true
